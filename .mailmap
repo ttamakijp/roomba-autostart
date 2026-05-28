@@ -1,0 +1,12 @@
+# このリポへの commit はすべて noreply 形式に正規化される。
+# 個人 email や private hostname を含む過去の identity は、
+# 2026-05-25 の repo delete+recreate (docs/incidents/2026-05-23-backup-tag-leak.md)
+# で物理消滅した backup タグ配下にのみ存在し、現在の main / git history からは
+# 到達不能。検出層は .githooks/pre-commit + scripts/check-leakage.sh の
+# email allowlist (file content) に集約 (ADR-0028)。
+#
+# 原則: .mailmap LHS には個人 identity の literal を書かない。
+# 「守るためのファイル」が「守る対象」を含む構造を避ける。
+
+# noreply 短縮形 → numeric ID 形式への正規化のみ
+ttamakijp <46277407+ttamakijp@users.noreply.github.com> <ttamakijp@users.noreply.github.com>

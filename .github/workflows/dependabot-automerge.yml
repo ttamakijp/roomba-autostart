@@ -1,0 +1,86 @@
+name: Dependabot auto-merge
+
+# ADR-0011 Phase 5: auto-merge Dependabot PRs for patch / minor updates,
+# provided all required status checks pass. Major and security updates are
+# NOT auto-merged (breaking change risk / urgent review required).
+#
+# Prerequisites:
+#   - Phase 1 L4 branch protection: required_status_checks should include the
+#     CI jobs that must pass. `gh pr merge --auto` waits for those checks
+#     before performing the merge.
+#   - Phase 2 quality-gates.yml: ensures lint/format/coverage are green
+#     before any auto-merge fires.
+#
+# Subject convention (ADR-0005 + 6-PR streak of (#N) suppression):
+#   --subject is set explicitly with the PR title stripped of any trailing
+#   `(#N)` suffix that GitHub might inject when re-quoting.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide auto-merge eligibility
+        id: gate
+        run: |
+          set -euo pipefail
+          update_type='${{ steps.meta.outputs.update-type }}'
+          dep_type='${{ steps.meta.outputs.dependency-type }}'
+          alert_state='${{ steps.meta.outputs.alert-state }}'
+
+          echo "  update-type:      $update_type"
+          echo "  dependency-type:  $dep_type"
+          echo "  alert-state:      $alert_state"
+
+          # auto-merge only patch / minor (not major).
+          case "$update_type" in
+            version-update:semver-patch|version-update:semver-minor) ;;
+            *)
+              echo "  decision: SKIP (update-type is not patch or minor)"
+              echo "eligible=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          # Skip if Dependabot flags this as a security update (auto-merge could
+          # mask a breaking change in an urgent patch — keep humans in the loop).
+          if [ -n "$alert_state" ] && [ "$alert_state" != "no" ]; then
+            echo "  decision: SKIP (security-related alert)"
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "  decision: ELIGIBLE (patch/minor, non-security)"
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge (squash, (#N)-free subject)
+        if: steps.gate.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          # Strip any trailing " (#N)" that may be present in the PR title.
+          subject="$(printf '%s' "$PR_TITLE" | sed 's/ (#[0-9][0-9]*)$//')"
+          echo "  subject: $subject"
+          gh pr merge "$PR_URL" \
+            --squash \
+            --delete-branch \
+            --auto \
+            --subject "$subject" \
+            --body ""

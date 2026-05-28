@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Repo-local pre-commit hook. Delegates to scripts/check-leakage.sh
+# plus a skill-mirror drift check (ADR-0023).
+# Activate once per clone with: bash scripts/setup-hooks.sh
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+
+bash "${ROOT}/scripts/check-leakage.sh" --pre-commit
+
+# ADR-0023 fool-proof: templates/skills/<name>/SKILL.md and the
+# dogfooding mirror skills/<name>/SKILL.md must stay byte-identical.
+# Drift is rejected here so apply.sh sync is never skipped silently.
+declare -a MIRROR_PAIRS=(
+  "templates/skills/propose-adr/SKILL.md:skills/propose-adr/SKILL.md"
+  "templates/skills/spec-writer-from-interview/SKILL.md:skills/spec-writer-from-interview/SKILL.md"
+)
+for pair in "${MIRROR_PAIRS[@]}"; do
+  master="${ROOT}/${pair%%:*}"
+  mirror="${ROOT}/${pair##*:}"
+  if [[ -f "${master}" && -f "${mirror}" ]]; then
+    if ! diff -q "${master}" "${mirror}" >/dev/null 2>&1; then
+      printf >&2 "FAIL (SKILL_MIRROR_DRIFT_001): %s drifted from %s\n" \
+        "${pair##*:}" "${pair%%:*}"
+      printf >&2 "  Fix: edit templates/ side and run 'bash scripts/apply.sh'\n"
+      printf >&2 "  Or:  cp '%s' '%s'\n" "${master}" "${mirror}"
+      exit 1
+    fi
+  fi
+done

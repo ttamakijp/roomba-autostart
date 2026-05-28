@@ -141,3 +141,23 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# === dev-templates required patterns (ADR-0008) ===
+.env.local
+*.pem
+*.key
+*.jks
+*.keystore
+*.p12
+local.properties
+google-services.json
+GoogleService-Info.plist
+# === end dev-templates required patterns ===
+
+# Node-RED 認証情報・実フロー（バックアップ）
+flows_cred.json
+flows_*.backup.json
+
+# Node-RED ローカル設定
+.node-red/
+settings.js.local

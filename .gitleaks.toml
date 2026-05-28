@@ -1,0 +1,130 @@
+# gitleaks config — extends the default rule set with project-specific
+# allowlist entries so legitimate placeholder examples in docs are not flagged.
+# See: https://github.com/gitleaks/gitleaks#configuration
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Legitimate placeholder examples in documentation"
+
+# Files that document the secret patterns we want to keep flaggable elsewhere.
+paths = [
+  '''docs/architecture\.md''',
+  '''docs/release\.md''',
+  '''docs/security\.md''',
+  '''docs/superpowers/.*''',
+  '''claude-bootstrap/templates/library-kotlin/README\.md''',
+  '''templates/agents/.*\.md''',
+  '''skills/.*/SKILL\.md''',
+  '''CONTRIBUTING\.md''',
+  # Incident reports legitimately reference 40-hex git commit SHAs and other
+  # entropy-rich tokens (cache keys, fingerprints) when documenting past
+  # security events. These are not secrets — they are forensic artifacts.
+  # See docs/incidents/2026-05-23-backup-tag-leak.md and ADR-0004.
+  '''docs/incidents/.*''',
+  # ADR-0007 apply orchestration scripts contain `git@github.com:` URL
+  # parsers and example/noreply email strings as part of the help text.
+  # Their content is documenting the patterns, not exposing PII.
+  '''scripts/apply-to-project\.sh$''',
+  '''scripts/apply-to-project\.ps1$''',
+  '''skills/apply-dev-templates/SKILL\.md$''',
+  '''templates/apply-presets/.*\.yml$''',
+  '''tests/test_apply_orchestration\.py$''',
+  '''docs/adr/0007-apply-orchestration\.md$''',
+]
+
+# Inline regexes for placeholder values that look like secrets but are
+# intentionally shown for documentation purposes.
+regexTarget = "line"
+regexes = [
+  '''(?i)(password|passwd|secret|token|key)\s*[:=]\s*(\.\.\.|<[a-z_-]+>|YOUR_[A-Z_]+|example)''',
+  '''ossrhPassword''',
+  '''<your[-_a-zA-Z]+>''',
+]
+
+# ============================================================================
+# Custom PII rules (ADR-0006). gitleaks does not ship rules for personal
+# identifiers like phone/email/postal, so we add them here as a redundant
+# layer alongside scripts/check-leakage.sh. Duplicate detection is intended.
+# ============================================================================
+
+[[rules]]
+id = "email-personal-non-noreply"
+description = "Email address (filtered via allowlist regexes for noreply/example/etc)"
+# NOTE: gitleaks uses go-re2 which does NOT support negative lookahead `(?!...)`.
+# We match all email-like strings and exclude allowed forms via the allowlist
+# `regexes` below. Same semantic as scripts/check-leakage.sh's email content
+# check, expressed in RE2-compatible form.
+regex = '''(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}'''
+tags = ["pii", "email"]
+[rules.allowlist]
+# Allowed email patterns. Anything matching here is suppressed.
+regexes = [
+  '''@users\.noreply\.github\.com\b''',
+  '''^noreply@github\.com$''',
+  '''@example\.(com|org|net)\b''',
+  '''@localhost\b''',
+  '''@anthropic\.com\b''',
+  '''^name@example''',
+]
+# Files that legitimately reference personal-looking emails (e.g. .mailmap
+# maps the leaked iCloud address; docs about the incident describe it).
+paths = [
+  '''\.mailmap$''',
+  '''CONTRIBUTING\.md$''',
+  '''CHANGELOG\.md$''',
+  '''docs/incidents/.*''',
+  '''docs/adr/0005-.*''',
+  '''docs/adr/0006-.*''',
+  '''source/rules/common/durable-references\.md$''',
+  '''source/rules/common/security-mobile\.md$''',
+  '''scripts/check-leakage\.sh$''',
+  '''scripts/\.leak-name-denylist\.example$''',
+  '''tests/test_leak_prevention\.py$''',
+  '''tests/test_durable_references\.py$''',
+  '''tests/test_pii_detection\.py$''',
+  # ADR-0012: host-guard test fixtures use SCP-form SSH URLs
+  # (git@github.com:owner/repo.git, git@gitlab.com:group/repo.git, etc.)
+  # which match the email-like regex by structure but are not PII.
+  '''tests/test_host_guard\.py$''',
+  '''scripts/_host-detect\.sh$''',
+  '''docs/adr/0012-host-aware-guard\.md$''',
+  '''\.gitleaks\.toml$''',
+]
+
+[[rules]]
+id = "phone-jp-mobile"
+description = "Japanese mobile phone number (070/080/090)"
+regex = '''0[789]0[-\s][0-9]{4}[-\s][0-9]{4}'''
+tags = ["pii", "phone", "jp"]
+[rules.allowlist]
+regexes = ['''XXX[-\s]XXXX''', '''000[-\s]0000''']
+paths = [
+  '''CONTRIBUTING\.md$''',
+  '''CHANGELOG\.md$''',
+  '''docs/incidents/.*''',
+  '''docs/adr/0006-.*''',
+  '''source/rules/common/security-mobile\.md$''',
+  '''source/rules/common/durable-references\.md$''',
+  '''scripts/check-leakage\.sh$''',
+  '''tests/test_pii_detection\.py$''',
+  '''\.gitleaks\.toml$''',
+]
+
+[[rules]]
+id = "postal-jp"
+description = "Japanese postal code (〒NNN-NNNN)"
+regex = '''〒\s?[0-9]{3}[-\s][0-9]{4}'''
+tags = ["pii", "address", "jp"]
+[rules.allowlist]
+regexes = ['''〒XXX-XXXX''']
+paths = [
+  '''CONTRIBUTING\.md$''',
+  '''CHANGELOG\.md$''',
+  '''docs/incidents/.*''',
+  '''docs/adr/0006-.*''',
+  '''source/rules/common/security-mobile\.md$''',
+  '''scripts/check-leakage\.sh$''',
+  '''tests/test_pii_detection\.py$''',
+  '''\.gitleaks\.toml$''',
+]

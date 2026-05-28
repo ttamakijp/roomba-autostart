@@ -1,0 +1,74 @@
+# ADR-0017 Phase 3 — Cost budget thresholds (TEMPLATE).
+#
+# Rename to `cost-budget.yml` AND edit values per project before running
+# `scripts/cost-report.py`. The reporter expects this exact filename in
+# the repo root (or pass `--budget <path>` explicitly).
+#
+# - `warn` thresholds raise a ⚠ section in the markdown report.
+# - `alert` thresholds raise a 🚨 section AND (when `--issue` is given)
+#   cause the reporter to open a GitHub Issue.
+# - All values are upper bounds: usage >= threshold triggers the band.
+# - Set a value to `null` (or remove the key) to disable that band.
+# - Numbers are USD unless otherwise noted.
+
+claude:
+  # Monthly Claude API spend across all models / workspaces.
+  monthly_usd_warn:  50
+  monthly_usd_alert: 100
+
+github_actions:
+  # Monthly GitHub-hosted Actions minutes used.
+  # ADR-0016 self-hosted runners drove this near zero; thresholds here
+  # are mostly a safety net in case a workflow forgets `runs-on: self-hosted`.
+  monthly_minutes_warn:  1500
+  monthly_minutes_alert: 1900
+
+cloud_aws:
+  # Month-to-date AWS spend across all services.
+  monthly_usd_warn:  100
+  monthly_usd_alert: 500
+
+cloud_azure:
+  monthly_usd_warn:  100
+  monthly_usd_alert: 500
+
+cloud_gcp:
+  monthly_usd_warn:  100
+  monthly_usd_alert: 500
+
+pc_resource:
+  # Runner CPU usage thresholds (instantaneous, not cumulative).
+  runner_cpu_pct_warn:  60
+  runner_cpu_pct_alert: 80
+
+runner_uptime:
+  # Per-task uptime SLI over the rolling 7-day window.
+  uptime_pct_warn:  98
+  uptime_pct_alert: 95
+
+# ----------------------------------------------------------------------
+# ADR-0021 Phase 7 — Delivery predictability thresholds.
+# ----------------------------------------------------------------------
+delivery:
+  # Milestone slip windows: a milestone with open issues and a due_date
+  # falling within N days is flagged (slip_warn / slip_alert / overdue).
+  milestone_slip_warn_days:  7
+  milestone_slip_alert_days: 14
+  # Release cadence drift = stddev(gaps) / median(gaps). > 0.5 means the
+  # release rhythm has lost half a cycle of noise — a planning smell.
+  release_cadence_drift_warn: 0.5
+
+# ----------------------------------------------------------------------
+# ADR-0022 Phase 8 — Lead time / DORA 4 metrics thresholds.
+# Values reflect the lower bound of the "Medium" DORA performance band,
+# which is the realistic first goal for a solo-operator project.
+# ----------------------------------------------------------------------
+lead_time:
+  # Minimum deploy frequency (median tags/releases per ISO week).
+  deploy_freq_min_per_week: 1
+  # Median PR created_at → merged_at, in hours.
+  change_lead_time_max_hours: 72
+  # Fraction of merged PRs whose title matches ^(fix|hotfix|revert):
+  change_failure_rate_max: 0.15
+  # Median 'incident'-labeled issue lifecycle, in hours.
+  mttr_max_hours: 24

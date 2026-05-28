@@ -1,0 +1,80 @@
+[
+  {
+    "id": "tab-basic",
+    "type": "tab",
+    "label": "Roomba 自動発進（基本）",
+    "disabled": false,
+    "info": "毎日 09:00 にドックを約10秒 OFF→ON する最小フロー。\n認証情報（メール/パスワード/IP）はプレースホルダ。実値は Node-RED credentials で注入する。"
+  },
+  {
+    "id": "inject-0900",
+    "type": "inject",
+    "z": "tab-basic",
+    "name": "毎日 09:00",
+    "props": [
+      { "p": "payload" }
+    ],
+    "repeat": "",
+    "crontab": "00 09 * * *",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 140,
+    "y": 120,
+    "wires": [
+      ["tapo-off"]
+    ]
+  },
+  {
+    "id": "tapo-off",
+    "type": "tapo-power",
+    "z": "tab-basic",
+    "name": "ドック OFF",
+    "host": "<TAPO_IP>",
+    "email": "<TPLINK_EMAIL>",
+    "password": "<TPLINK_PASSWORD>",
+    "action": "off",
+    "x": 350,
+    "y": 120,
+    "wires": [
+      ["delay-10s"]
+    ]
+  },
+  {
+    "id": "delay-10s",
+    "type": "delay",
+    "z": "tab-basic",
+    "name": "10 秒",
+    "pauseType": "delay",
+    "timeout": "10",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "x": 540,
+    "y": 120,
+    "wires": [
+      ["tapo-on"]
+    ]
+  },
+  {
+    "id": "tapo-on",
+    "type": "tapo-power",
+    "z": "tab-basic",
+    "name": "ドック ON",
+    "host": "<TAPO_IP>",
+    "email": "<TPLINK_EMAIL>",
+    "password": "<TPLINK_PASSWORD>",
+    "action": "on",
+    "x": 730,
+    "y": 120,
+    "wires": [
+      []
+    ]
+  }
+]

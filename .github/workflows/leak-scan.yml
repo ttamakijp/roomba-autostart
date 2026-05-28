@@ -1,0 +1,35 @@
+name: Leak Scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly sanity check in case rules drift.
+    - cron: '0 0 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  custom-check:
+    name: Custom leak check (identity + paths)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run scripts/check-leakage.sh --ci
+        run: bash scripts/check-leakage.sh --ci
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

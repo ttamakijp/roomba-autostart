@@ -1,0 +1,113 @@
+<!-- generated from source/rules/common/dev-cycle.md — do not edit; run scripts/build-rules.sh -->
+---
+description: 5-phase cycle (skeleton -> debug API -> deploy -> measure -> analyze -> improve) for AI-driven autonomous development
+globs: "**/*"
+alwaysApply: false
+---
+
+# Development cycle
+
+## 要件
+
+- 「実装 → 自動デプロイ → Debug API 直接読取 → 解析 → 改善 PR」のループを初期スプリントから組み込む
+- ユーザ実機操作とスクリーンショット送信に依存しない検証経路を確保する
+- 全フェーズで AI が JSON を機械可読で取得できる状態を維持する
+
+## 5 フェーズ構成
+
+### Phase 0 — スケルトン
+
+- 最低限の機能 + ビルド自動化（Gradle / Makefile 等）
+- ADB 接続を確立する（ワイヤレスデバッグ or USB）
+- CI/CD の土台（ローカルスクリプトでも可）
+
+### Phase 1 — 自己検証 API（最重要）
+
+debug build 限定の HTTP サーバをアプリへ組み込み、AI が直接 JSON を読める状態にする。
+
+- ローカルループバック（`127.0.0.1`）または端末 IP で listen する
+- 主要エンドポイント:
+  - `GET /api/debug/state` — アプリ現在状態のスナップショット
+  - `GET /api/debug/history` — 計測履歴（JSON Lines）
+- IP 承認は 24h TTL で永続化し、初回承認後の再認証を省略する
+- `BuildConfig.DEBUG` で release build から完全除外する
+
+### Phase 2 — デプロイ自動化
+
+- `adb install -r` / `adb shell am start` を `scripts/deploy.sh` 等で自動化する
+- 接続中の全デバイスへ `adb devices` で列挙してインストール展開する
+- ワイヤレスデバッグ + USB tether 併用で PC 操作ゼロを目指す
+
+### Phase 3 — データ収集
+
+- PR 前後で同一エンドポイントを計測し JSON 保存する
+- ファイル命名: `measurements/YYYY-MM-DD_HHMMSS_<label>.json`
+- 履歴は JSON Lines（`.jsonl`） append-only + rotate
+
+### Phase 4 — 解析
+
+- JSON diff / 統計（平均・標準偏差・改善率）を算出する
+- 閾値を超えた指標について原因候補を列挙する
+- 改善 PR 候補（タイトル・変更箇所・根拠）を自動生成する
+
+### Phase 5 — 改善実装
+
+1. 仮説に基づき設計 → draft PR を出す
+2. ユーザ承認 → ready PR → マージ
+3. 再デプロイ → 再計測 → 効果検証（Phase 3 へ戻る）
+
+## Do
+
+- ファイル冒頭で provides を 1 行明示し、責務をピンポイントで読めるようにする
+- 評価 API は後方互換設計（フィールド追加で既存クライアントを壊さない）にする
+- 仮説と検証指標を PR description に明記する
+
+## Don't
+
+- `adb logcat` のみに依存しない（構造化されておらず機械解析が困難）
+- release build へ debug API を露出させない
+- HTML ダッシュボードのみで JSON エンドポイントを欠落させない
+- IP 承認を毎回手動にせず、TTL 永続化を必ず入れる
+
+## プロジェクト立ち上げ時チェックリスト
+
+- [ ] debug build に HTTP サーバを組み込んだか
+- [ ] `GET /api/debug/state` で現在状態を JSON で返せるか
+- [ ] ワイヤレスデバッグ + USB tether の運用が確立しているか
+- [ ] IP 承認永続化（24h TTL）でユーザ操作を最小化しているか
+- [ ] ダッシュボード（ルート HTML or `/api/debug/`）に各エンドポイントへの導線があるか
+- [ ] API スキーマが後方互換設計か
+
+## 推奨スプリント計画
+
+| Sprint | 主要デリバラブル |
+|--------|-----------------|
+| Sprint 0 | スケルトン + ADB 接続確立 |
+| Sprint 1 | HTTP サーバ + `GET /state` エンドポイント |
+| Sprint 2 | IP 承認永続化 + USB tether 検出 |
+| Sprint 3 | 履歴ストア + `GET /history` エンドポイント |
+| Sprint 4 | ダッシュボード整理・Debug Connection セクション |
+| Sprint 5+ | 専用評価モード（GT 記録・A/B 比較・バイアス分析） |
+
+## ADR 運用
+
+- DB スキーマ / 通信方式 / アーキテクチャ層分割 / 主要ライブラリ採用 / 認証方式 / パフォーマンス対応方針 は ADR 必須
+- 軽微なリファクタ・命名規則・テスト書式は ADR 不要
+- ADR は `docs/adr/NNNN-<kebab-title>.md`（4 桁ゼロパディング）に配置する
+- ライフサイクル: 提案 → draft PR → LGTM → 採用へ変更してマージ → 覆される場合は新規 ADR を起こし旧 ADR を「上書き」に変更
+
+## 根拠
+
+- ユーザ実機操作を経由しない検証経路があると AI が能動的にデバッグを進められ、レビュー往復が激減する
+- JSON Lines + append-only は再現性とデータ欠損耐性を両立する
+- 後方互換 API 設計により、改善 PR がクライアント側修正を強要せず段階展開できる
+
+## アンチパターン
+
+| アンチパターン | 問題点 |
+|---------------|--------|
+| `adb logcat` への依存 | 構造化されておらず機械解析が困難 |
+| ユーザ実機操作必須の検証フロー | スクショ送信ループで自動化不可 |
+| release build への debug API 露出 | セキュリティリスク |
+| IP 承認永続化なし | 毎回再認証が発生し運用負担大 |
+| HTML ダッシュボードのみ | 機械可読性なし、AI が直接読めない |

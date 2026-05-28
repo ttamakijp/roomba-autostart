@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Repo-local pre-push hook. Refuses to publish backup refs.
+#
+# Background: on 2026-05-15 four tags under refs/tags/backup/ leaked private
+# identifiers (icloud email / tailnet hostname / kanji name) to the public
+# repository via a `git push --tags` invocation. See ADR-0004
+# (docs/adr/0004-backup-ref-scope.md) and docs/incidents/2026-05-23-backup-tag-leak.md.
+#
+# Policy (enforced here):
+#   - ADR-0012: push destination must match `.git-host-allowlist` if that
+#     file exists at the repo root. Catches accidental cross-host push
+#     (e.g. an ADO repo with a github remote misconfigured).
+#   - Pushing anything matching refs/tags/backup/* is rejected.
+#   - Pushing anything matching refs/backup/* is rejected (the canonical
+#     local-only namespace is refs/backup/local-only/* -- by definition not
+#     to be shared).
+#   - Pushing anything matching refs/<namespace>/backup or
+#     refs/<namespace>/backup/... is rejected (ADR-0008 PR-B extension —
+#     closes the alias loophole, e.g. refs/notes/backup/foo, refs/foo/backup/bar).
+#     Branch names with "backup" elsewhere (e.g. refs/heads/feature-backup-test)
+#     are NOT matched, only `/backup` as a path segment.
+#   - Deletions (zero local sha) of those refs are allowed: cleanup of
+#     existing leaked refs is a desirable operation.
+#   - Hook chain integrity (ADR-0008 PR-B): on every invocation, verify
+#     core.hooksPath points at .githooks (warn only if not — over-defense
+#     would block legitimate pushes from contributors who never ran setup-hooks).
+#
+# Activate once per clone:
+#   bash scripts/setup-hooks.sh      # Linux/macOS/WSL
+#   pwsh scripts/setup-hooks.ps1     # Windows
+#
+# Emergency bypass (use only when you know the ref is genuinely safe):
+#   git push --no-verify ...
+set -euo pipefail
+
+zero_sha='0000000000000000000000000000000000000000'
+violations=0
+
+# git provides remote name in $1 and remote URL in $2 (per `man githooks`).
+remote_name="${1:-origin}"
+remote_url="${2:-}"
+
+## ADR-0012: host allowlist check. If `.git-host-allowlist` exists at the
+## repo root, the push destination URL must match at least one pattern
+## there. This catches "I added a github remote to my ADO repo and pushed
+## by mistake" before the bytes leave the machine.
+##
+## Bypass: git push --no-verify ...   (logged in git reflog; CI may flag it)
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ -f "$ROOT/.git-host-allowlist" ] && [ -n "$remote_url" ] \
+   && [ -f "$ROOT/scripts/_host-detect.sh" ]; then
+  # shellcheck disable=SC1090,SC1091
+  source "$ROOT/scripts/_host-detect.sh"
+  if ! check_allowlist "$remote_url" "$ROOT/.git-host-allowlist"; then
+    {
+      echo ""
+      echo "pre-push: refusing to push — destination not in .git-host-allowlist."
+      echo ""
+      echo "  remote URL:  $remote_url"
+      echo "  allowlist:   $ROOT/.git-host-allowlist"
+      echo ""
+      echo "Resolutions:"
+      echo "  1) Confirm the intended host:    git remote -v"
+      echo "  2) If correct, append the pattern to .git-host-allowlist and commit"
+      echo "  3) Emergency bypass (use sparingly): git push --no-verify ..."
+      echo ""
+      echo "See: docs/adr/0012-host-aware-guard.md"
+    } >&2
+    exit 1
+  fi
+fi
+
+## ADR-0008 PR-B: hook chain integrity check. warn-only by design — failing
+## the push here would block contributors who haven't run setup-hooks yet,
+## and CI catches the missing-hook case via the leak-scan workflow anyway.
+hooks_path="$(git config core.hooksPath 2>/dev/null || true)"
+if [ "$hooks_path" != ".githooks" ]; then
+  printf >&2 "pre-push [warn]: core.hooksPath is not '.githooks' (current: '%s').\n" "${hooks_path:-<unset>}"
+  printf >&2 "                pre-commit hook may not be active. Run:\n"
+  printf >&2 "                  bash scripts/setup-hooks.sh\n"
+  printf >&2 "                Push will proceed; CI will still run all checks.\n"
+fi
+
+## Pattern test for any backup-related ref. Returns 0 (true) if the given ref
+## should be rejected. The historical patterns (refs/tags/backup/*, refs/backup/*)
+## are extended by ADR-0008 PR-B to also catch refs/<namespace>/backup(/...)
+## paths — closing the alias loophole without false-positive-matching branch
+## names that merely contain the substring "backup" (e.g. feature-backup-test).
+is_backup_ref() {
+  local ref="$1"
+  case "$ref" in
+    refs/tags/backup/*|refs/backup/*) return 0 ;;
+  esac
+  # Bash regex: refs/<segment>/backup as a path segment (with optional sub-path).
+  if [[ "$ref" =~ ^refs/[^/]+/backup(/|$) ]]; then
+    return 0
+  fi
+  return 1
+}
+
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "${local_ref:-}" ] && continue
+
+  # Check both sides of the refspec:
+  #   - local_ref catches `git push origin refs/tags/backup/foo`
+  #     and `git push --tags` (which feeds each tag verbatim)
+  #   - remote_ref catches the cross-rename
+  #     `git push origin refs/heads/main:refs/tags/backup/foo`
+  ref_to_check=""
+  if is_backup_ref "$local_ref"; then
+    ref_to_check="$local_ref"
+  elif [ -n "${remote_ref:-}" ] && is_backup_ref "$remote_ref"; then
+    ref_to_check="$remote_ref"
+  fi
+  [ -z "$ref_to_check" ] && continue
+
+  # Deletion (local_sha == all-zeros) is the intended cleanup path; allow it.
+  # For true deletions git also reports local_ref as "(delete)" -- those are
+  # filtered out above by the case branches not matching, but a degenerate
+  # client could still feed a real ref name with zero sha, so check sha too.
+  if [ "${local_sha:-}" = "$zero_sha" ]; then
+    continue
+  fi
+
+  echo "pre-push: refusing to publish backup ref: $ref_to_check" >&2
+  violations=$((violations + 1))
+done
+
+if [ "$violations" -gt 0 ]; then
+  {
+    echo ""
+    echo "Push rejected: $violations backup ref(s) would be published."
+    echo "Backup refs are local-only by policy -- see ADR-0004"
+    echo "(docs/adr/0004-backup-ref-scope.md)."
+    echo ""
+    echo "Resolutions:"
+    echo "  - Move the backup under refs/backup/local-only/<name> and do not push it."
+    echo "  - Delete the local ref:        git tag -d backup/<name>"
+    echo "                                  git update-ref -d refs/backup/<name>"
+    echo "  - If you must override (rare): git push --no-verify ..."
+  } >&2
+  exit 1
+fi
+
+exit 0

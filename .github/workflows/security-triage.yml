@@ -1,0 +1,59 @@
+name: Security Triage
+
+# ADR-0011 Phase 5 (Security alert triage): list and classify open
+# Dependabot / CodeQL alerts. Fails the workflow if any `critical` or
+# `high` severity alert is active without a tracking PR.
+#
+# Issue auto-creation on detection is intentionally deferred to Phase 4
+# (operational runbook). For now this workflow only surfaces the state
+# via the Actions summary + failed status.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 04:00 UTC (13:00 JST).
+    - cron: "0 4 * * *"
+
+permissions:
+  contents: read
+  security-events: read
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List Dependabot alerts
+        id: list
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # `gh api` returns 404 when the feature is disabled or not yet
+          # enabled on the repo; treat that as "no alerts" rather than fail.
+          alerts="$(gh api -X GET \
+            "repos/${{ github.repository }}/dependabot/alerts" \
+            -F state=open --jq '.' 2>/dev/null || echo '[]')"
+          critical=$(echo "$alerts" | jq '[.[] | select(.security_advisory.severity == "critical")] | length')
+          high=$(echo "$alerts" | jq '[.[] | select(.security_advisory.severity == "high")] | length')
+          medium=$(echo "$alerts" | jq '[.[] | select(.security_advisory.severity == "medium")] | length')
+          low=$(echo "$alerts" | jq '[.[] | select(.security_advisory.severity == "low")] | length')
+
+          {
+            echo "## Dependabot Alert Summary"
+            echo ""
+            echo "| Severity | Count |"
+            echo "|---|---|"
+            echo "| critical | $critical |"
+            echo "| high | $high |"
+            echo "| medium | $medium |"
+            echo "| low | $low |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "critical=$critical" >> "$GITHUB_OUTPUT"
+          echo "high=$high" >> "$GITHUB_OUTPUT"
+
+      - name: Fail if critical or high alerts exist
+        if: steps.list.outputs.critical != '0' || steps.list.outputs.high != '0'
+        run: |
+          echo "::error::Open critical/high security alerts present — manual triage required (see Actions summary)."
+          exit 1

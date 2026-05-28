@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""ADR-0017 Phase 3 — GCP Billing collector (TEMPLATE / STUB).
+
+このファイルは **`.template` 拡張子のまま** 配置されている。GCP 利用 project
+のみ rename + credentials 設定で有効化する。
+
+GCP の billing 情報取得は 2 通り:
+
+1. **BigQuery export** (推奨, project が事前に billing export を設定済前提)
+   - `GOOGLE_APPLICATION_CREDENTIALS` で service account を指定
+   - `GCP_BILLING_BQ_TABLE` で `<project>.<dataset>.gcp_billing_export_v1_<id>`
+     を指定
+   - pip install 'google-cloud-bigquery>=3.0'
+
+2. **Cloud Billing API** (簡易、project レベル合計のみ)
+   - `GCP_BILLING_ACCOUNT_ID` を指定
+   - pip install 'google-cloud-billing>=1.10'
+
+このテンプレは BigQuery export 方式を実装。BQ 未設定 project は API 方式に
+書き換えること。
+
+出力 schema:
+
+    {
+      "month_to_date_usd": 28.50,
+      "by_service": [{"service": "Compute Engine", "usd": 20.00}, ...],
+      "billing_period_start": "2026-05-01",
+      "billing_period_end":   "2026-05-24"
+    }
+
+Refs: ADR-0017
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import date
+
+
+def _emit_unavailable(reason: str) -> int:
+    print(
+        f"[cost-collect-cloud-gcp] WARN: {reason}",
+        file=sys.stderr,
+    )
+    json.dump({"unavailable": True, "reason": reason}, sys.stdout)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="GCP billing collector (ADR-0017).")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.dry_run:
+        return _emit_unavailable("dry-run")
+
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    bq_table = os.environ.get("GCP_BILLING_BQ_TABLE")
+    if not creds_path:
+        return _emit_unavailable("GOOGLE_APPLICATION_CREDENTIALS not set")
+    if not bq_table:
+        return _emit_unavailable(
+            "GCP_BILLING_BQ_TABLE not set (e.g. proj.dataset.gcp_billing_export_v1_xxx)"
+        )
+
+    try:
+        from google.cloud import bigquery  # type: ignore
+    except ImportError:
+        return _emit_unavailable(
+            "google-cloud-bigquery not installed (pip install google-cloud-bigquery)"
+        )
+
+    today = date.today()
+    period_start = today.replace(day=1).isoformat()
+    period_end = today.isoformat()
+
+    # `cost` is monthly aggregate, `service.description` is service display name.
+    # Query is intentionally minimal to keep BQ slot cost low.
+    query = f"""
+        SELECT service.description AS service, SUM(cost) AS usd
+        FROM `{bq_table}`
+        WHERE usage_start_time >= TIMESTAMP("{period_start}")
+          AND usage_start_time <  TIMESTAMP("{period_end}T23:59:59Z")
+        GROUP BY service
+        ORDER BY usd DESC
+    """
+
+    try:
+        client = bigquery.Client()
+        job = client.query(query)
+        rows = list(job.result())
+    except Exception as e:  # noqa: BLE001
+        return _emit_unavailable(f"BigQuery error: {type(e).__name__}: {e}")
+
+    by_service: list[dict] = []
+    total = 0.0
+    for r in rows:
+        try:
+            amount = float(r["usd"])
+        except (TypeError, ValueError, KeyError):
+            amount = 0.0
+        service = str(r["service"]) if r.get("service") else "unknown"
+        by_service.append({"service": service, "usd": round(amount, 2)})
+        total += amount
+
+    out = {
+        "month_to_date_usd": round(total, 2),
+        "by_service": by_service,
+        "billing_period_start": period_start,
+        "billing_period_end": period_end,
+    }
+    json.dump(out, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

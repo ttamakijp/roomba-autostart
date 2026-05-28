@@ -1,0 +1,58 @@
+name: Settings Drift Check
+
+# ADR-0008 (L5 drift check): detect drift in GitHub repository settings
+# from the dev-templates baseline. Catches accidental or malicious changes
+# made via the GitHub UI that git-based checks cannot see.
+#
+# Runs:
+#   - Daily at 03:00 UTC (12:00 JST) via cron
+#   - On-demand via workflow_dispatch
+#   - On PR that touches scripts/check-repo-settings.sh (smoke test)
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/check-repo-settings.sh'
+      - '.github/workflows/settings-drift.yml'
+
+jobs:
+  settings-drift:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check repo settings drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/check-repo-settings.sh "${{ github.repository }}"
+
+  gitleaks-config-drift:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch base ref
+        run: git fetch origin main:main || git fetch origin main
+      - name: Check gitleaks config drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # On schedule/dispatch this compares HEAD to main (no diff = no drift).
+          # On PR this compares the PR head to its base.
+          if [ -n "${{ github.event.pull_request.base.ref }}" ]; then
+            base="origin/${{ github.event.pull_request.base.ref }}"
+          else
+            base="origin/main"
+          fi
+          bash scripts/check-config-drift.sh "$base"

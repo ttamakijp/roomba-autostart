@@ -1,0 +1,36 @@
+<!-- generated from source/rules/common/file-granularity.md — do not edit; run scripts/build-rules.sh -->
+---
+applyTo: "**/*"
+---
+
+# File granularity
+
+## 要件
+
+- 1 ファイル目安 **300 行以下**、厳格上限 **500 行**
+- 上限超過時は必ず分割を検討する (責務分離 / helper 抽出 / 拡張関数化)
+- 1 ファイル 1 責務原則を守る (命名で「このファイルは何をするか」が即座に分かる状態)
+
+## Do
+
+- ファイル冒頭にそのファイルが何を提供するかを 1 行コメントで明示する
+- 300 行を超えたら分割候補を洗い出し、PR 内で別 commit として分離する
+- helper / extension / data-class を別ファイルに切り出す
+
+## Don't
+
+- 単一ファイルに複数責務 (UI + state + API + permission) を詰め込まない
+- 500 行を超えた状態で PR を出さない
+- 「あとで分割」コメントを残してマージしない (技術的負債化する)
+
+## 根拠
+
+- AI tool (Copilot / Cursor / Cline / Claude) は grep + 部分 Read で必要部分だけ取得する
+- ファイルが大きいと毎回フル読込が必要になり context 累積が増えコストが線形に膨らむ
+- 1 ファイル 1 責務を維持すると、編集時のピンポイント読込みとテスト単位の明確化が両立する
+
+## 例外
+
+- 自動生成コード (`*.g.kt` / `*_pb2.py` / `dist/**`) は適用外
+- フィクスチャ / sample data ファイルは適用外 (`tests/fixtures/**`)
+- migration ファイル (`*/migrations/**`) は適用外

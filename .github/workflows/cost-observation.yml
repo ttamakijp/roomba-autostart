@@ -1,0 +1,160 @@
+name: Cost Observation
+
+# ADR-0017 Phase 3 / ADR-0021 Phase 7 / ADR-0022 Phase 8 — weekly 集約レポート
+#
+# 観測軸:
+#   Cost (ADR-0017):     Claude API / GH Actions / AWS / Azure / GCP /
+#                        PC リソース / runner uptime
+#   Delivery (ADR-0021): GH milestones / release train cadence
+#   Lead time (ADR-0022): DORA 4 metrics / CI speed / PR review time
+#
+# PC リソース / runner uptime 観測は self-hosted Windows runner 上でしか
+# 走らない (Get-Counter / Task Scheduler は Linux runner に存在しない)。
+# それ以外の軸は ubuntu-latest で十分。
+#
+# secret 必須項目 (全て任意 — 設定なしの軸は unavailable で graceful):
+#   ANTHROPIC_ADMIN_API_KEY  - Claude usage (Admin API key)
+#   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY - AWS Cost Explorer
+#   AZURE_TENANT_ID + AZURE_CLIENT_ID + AZURE_CLIENT_SECRET + AZURE_SUBSCRIPTION_ID
+#   GOOGLE_APPLICATION_CREDENTIALS_JSON + GCP_BILLING_BQ_TABLE
+#   GITHUB_TOKEN (auto) — gh API for Phase 7 / Phase 8 collectors
+#
+# Refs: ADR-0017, ADR-0021, ADR-0022
+
+on:
+  schedule:
+    # Monday 00:00 UTC = Monday 09:00 JST.
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  collect-linux:
+    name: Collect (Linux-side axes)
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Make output dir
+        run: mkdir -p cost-out
+
+      - name: Collect Claude API usage
+        env:
+          ANTHROPIC_ADMIN_API_KEY: ${{ secrets.ANTHROPIC_ADMIN_API_KEY }}
+        run: |
+          python scripts/cost-collect-claude.py > cost-out/claude.json || true
+
+      - name: Collect GitHub Actions usage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/cost-collect-github-actions.sh > cost-out/gh-actions.json || true
+
+      - name: Collect AWS (if enabled)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          if [ -f scripts/cost-collect-cloud-aws.py ]; then
+            pip install -q 'boto3>=1.34' || true
+            python scripts/cost-collect-cloud-aws.py > cost-out/aws.json || true
+          else
+            echo '{"unavailable":true,"reason":"template not renamed"}' > cost-out/aws.json
+          fi
+
+      - name: Collect Azure (if enabled)
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          if [ -f scripts/cost-collect-cloud-azure.py ]; then
+            pip install -q 'azure-identity>=1.15' 'azure-mgmt-costmanagement>=4.0' || true
+            python scripts/cost-collect-cloud-azure.py > cost-out/azure.json || true
+          else
+            echo '{"unavailable":true,"reason":"template not renamed"}' > cost-out/azure.json
+          fi
+
+      - name: Collect GCP (if enabled)
+        env:
+          GCP_BILLING_BQ_TABLE: ${{ secrets.GCP_BILLING_BQ_TABLE }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          if [ -f scripts/cost-collect-cloud-gcp.py ]; then
+            if [ -n "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
+              printf '%s' "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/gcp-sa.json
+              export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
+            fi
+            pip install -q 'google-cloud-bigquery>=3.0' || true
+            python scripts/cost-collect-cloud-gcp.py > cost-out/gcp.json || true
+            rm -f /tmp/gcp-sa.json
+          else
+            echo '{"unavailable":true,"reason":"template not renamed"}' > cost-out/gcp.json
+          fi
+
+      - name: Collect milestones (ADR-0021 Phase 7)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/cost-collect-milestones.py > cost-out/milestones.json || true
+
+      - name: Collect release train (ADR-0021 Phase 7)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/cost-collect-release-train.sh > cost-out/release-train.json || true
+
+      - name: Collect DORA 4 metrics (ADR-0022 Phase 8)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/cost-collect-dora.py > cost-out/dora.json || true
+
+      - name: Collect CI speed (ADR-0022 Phase 8)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/cost-collect-ci-speed.sh > cost-out/ci-speed.json || true
+
+      - name: Collect PR review time (ADR-0022 Phase 8)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/cost-collect-pr-review-time.sh > cost-out/pr-review-time.json || true
+
+      - name: Build aggregate report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/cost-report.py \
+            --claude cost-out/claude.json \
+            --gh-actions cost-out/gh-actions.json \
+            --aws cost-out/aws.json \
+            --azure cost-out/azure.json \
+            --gcp cost-out/gcp.json \
+            --milestones cost-out/milestones.json \
+            --release-train cost-out/release-train.json \
+            --dora cost-out/dora.json \
+            --ci-speed cost-out/ci-speed.json \
+            --pr-review-time cost-out/pr-review-time.json \
+            --output cost-out/report.md \
+            --issue
+          cat cost-out/report.md
+
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-observation-report
+          path: cost-out/
+          retention-days: 30

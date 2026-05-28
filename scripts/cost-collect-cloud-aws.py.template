@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""ADR-0017 Phase 3 — AWS Cost Explorer collector (TEMPLATE / STUB).
+
+このファイルは **`.template` 拡張子のまま** リポジトリに置かれている。
+project が AWS を使う場合のみ:
+
+    cp scripts/cost-collect-cloud-aws.py.template \
+       scripts/cost-collect-cloud-aws.py
+    pip install 'boto3>=1.34'
+    # AWS credentials を設定:
+    #   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY を env / secret に置く
+    #   - もしくは IAM Role 経由 (EC2 / Lambda) で動かす
+
+その上で `scripts/cost-report.py --include cloud-aws` で集約される。
+default (template のまま) は **collector 未使用** で no-op。これは fool-proof
+ではなく fool-disable 設計 (credentials 不在 = 静かに skip)。
+
+出力 schema:
+
+    {
+      "month_to_date_usd": 42.10,
+      "by_service": [
+        {"service": "EC2 - Instance", "usd": 30.00},
+        {"service": "S3", "usd": 5.10},
+        ...
+      ],
+      "billing_period_start": "2026-05-01",
+      "billing_period_end":   "2026-05-24"
+    }
+
+credentials 不在 / boto3 未インストール / API 失敗時は:
+
+    {"unavailable": true, "reason": "..."}
+
+を出して exit 0 (graceful)。
+
+Refs: ADR-0017
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import date
+
+
+def _emit_unavailable(reason: str) -> int:
+    print(
+        f"[cost-collect-cloud-aws] WARN: {reason}",
+        file=sys.stderr,
+    )
+    json.dump({"unavailable": True, "reason": reason}, sys.stdout)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="AWS Cost Explorer monthly cost collector (ADR-0017)."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Skip AWS API and emit stub.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.dry_run:
+        return _emit_unavailable("dry-run")
+
+    if not (
+        os.environ.get("AWS_ACCESS_KEY_ID")
+        or os.environ.get("AWS_PROFILE")
+        or os.environ.get("AWS_ROLE_ARN")
+    ):
+        return _emit_unavailable("no AWS credentials in environment")
+
+    try:
+        import boto3  # type: ignore
+    except ImportError:
+        return _emit_unavailable("boto3 not installed (pip install boto3)")
+
+    today = date.today()
+    period_start = today.replace(day=1).isoformat()
+    period_end = today.isoformat()
+
+    try:
+        client = boto3.client("ce")
+        resp = client.get_cost_and_usage(
+            TimePeriod={"Start": period_start, "End": period_end},
+            Granularity="MONTHLY",
+            Metrics=["UnblendedCost"],
+            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+        )
+    except Exception as e:  # noqa: BLE001 — boto3 raises a wide variety
+        return _emit_unavailable(f"AWS API error: {type(e).__name__}: {e}")
+
+    by_service: list[dict] = []
+    total = 0.0
+    for result in resp.get("ResultsByTime", []) or []:
+        for group in result.get("Groups", []) or []:
+            service = (group.get("Keys") or ["unknown"])[0]
+            amount_raw = group.get("Metrics", {}).get("UnblendedCost", {}).get("Amount", "0")
+            try:
+                amount = float(amount_raw)
+            except (TypeError, ValueError):
+                amount = 0.0
+            by_service.append({"service": service, "usd": round(amount, 2)})
+            total += amount
+
+    out = {
+        "month_to_date_usd": round(total, 2),
+        "by_service": sorted(by_service, key=lambda r: -r["usd"]),
+        "billing_period_start": period_start,
+        "billing_period_end": period_end,
+    }
+    json.dump(out, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

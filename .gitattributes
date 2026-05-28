@@ -1,0 +1,4 @@
+
+# === dev-templates hook EOL guard (ADR-0004) ===
+.githooks/* text eol=lf
+# === end dev-templates hook EOL guard ===

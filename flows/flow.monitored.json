@@ -1,0 +1,194 @@
+[
+  {
+    "id": "tab-monitored",
+    "type": "tab",
+    "label": "Roomba 自動発進（事後検証つき）",
+    "disabled": false,
+    "info": "基本フロー（09:00 OFF→10秒→ON）に事後検証を追加。\nON 復帰の数秒後に電流を読み、充電電流が立っていれば発進失敗の疑いとして通知する。\n発進そのものはリアルタイム検知できない（OFF 中はリレー開放で電流 0）。詳細は docs/design.md §5。\n認証情報・しきい値・通知先はプレースホルダ。実値は Node-RED credentials / 環境で注入する。"
+  },
+  {
+    "id": "inject-0900-m",
+    "type": "inject",
+    "z": "tab-monitored",
+    "name": "毎日 09:00",
+    "props": [
+      { "p": "payload" }
+    ],
+    "repeat": "",
+    "crontab": "00 09 * * *",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 140,
+    "y": 100,
+    "wires": [
+      ["tapo-off-m"]
+    ]
+  },
+  {
+    "id": "tapo-off-m",
+    "type": "tapo-power",
+    "z": "tab-monitored",
+    "name": "ドック OFF",
+    "host": "<TAPO_IP>",
+    "email": "<TPLINK_EMAIL>",
+    "password": "<TPLINK_PASSWORD>",
+    "action": "off",
+    "x": 350,
+    "y": 100,
+    "wires": [
+      ["delay-10s-m"]
+    ]
+  },
+  {
+    "id": "delay-10s-m",
+    "type": "delay",
+    "z": "tab-monitored",
+    "name": "10 秒",
+    "pauseType": "delay",
+    "timeout": "10",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "x": 540,
+    "y": 100,
+    "wires": [
+      ["tapo-on-m"]
+    ]
+  },
+  {
+    "id": "tapo-on-m",
+    "type": "tapo-power",
+    "z": "tab-monitored",
+    "name": "ドック ON",
+    "host": "<TAPO_IP>",
+    "email": "<TPLINK_EMAIL>",
+    "password": "<TPLINK_PASSWORD>",
+    "action": "on",
+    "x": 730,
+    "y": 100,
+    "wires": [
+      ["delay-verify"]
+    ]
+  },
+  {
+    "id": "delay-verify",
+    "type": "delay",
+    "z": "tab-monitored",
+    "name": "数秒 wait（電流安定）",
+    "pauseType": "delay",
+    "timeout": "5",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "x": 170,
+    "y": 220,
+    "wires": [
+      ["tapo-status"]
+    ]
+  },
+  {
+    "id": "tapo-status",
+    "type": "tapo-status",
+    "z": "tab-monitored",
+    "name": "電力ステータス取得",
+    "host": "<TAPO_IP>",
+    "email": "<TPLINK_EMAIL>",
+    "password": "<TPLINK_PASSWORD>",
+    "x": 400,
+    "y": 220,
+    "wires": [
+      ["fn-verify"]
+    ]
+  },
+  {
+    "id": "fn-verify",
+    "type": "function",
+    "z": "tab-monitored",
+    "name": "事後検証（電流しきい値）",
+    "func": "// 復帰後の電流がしきい値を超える=ルンバがまだ居る=発進失敗の疑い。\n// しきい値は満充電時の挙動を踏まえて要チューニング（docs/design.md §5.2）。\nconst THRESHOLD_MA = '<CURRENT_THRESHOLD_MA>'; // TODO: 実測でチューニング\nconst currentMa = Number(msg.payload && msg.payload.current_ma);\nif (!Number.isFinite(currentMa)) {\n    msg.verdict = 'unknown';\n    msg.payload = '電流取得不能（事後検証スキップ）';\n    return [null, msg];\n}\nif (currentMa > Number(THRESHOLD_MA)) {\n    msg.verdict = 'suspect-fail';\n    msg.payload = `発進失敗の疑い: 充電電流 ${currentMa}mA がしきい値超`;\n    return [msg, null];\n}\nmsg.verdict = 'ok';\nmsg.payload = `発進成功の傍証: 充電電流 ${currentMa}mA`;\nreturn [null, msg];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 650,
+    "y": 220,
+    "wires": [
+      ["notify"],
+      ["debug-ok"]
+    ]
+  },
+  {
+    "id": "notify",
+    "type": "debug",
+    "z": "tab-monitored",
+    "name": "通知（要設定: メール/Slack 等）",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "payload",
+    "statusType": "auto",
+    "x": 920,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "debug-ok",
+    "type": "debug",
+    "z": "tab-monitored",
+    "name": "成功傍証ログ",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 900,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "catch-all",
+    "type": "catch",
+    "z": "tab-monitored",
+    "name": "KLAP/ノード失敗を捕捉",
+    "scope": null,
+    "uncaught": false,
+    "x": 170,
+    "y": 340,
+    "wires": [
+      ["fn-error"]
+    ]
+  },
+  {
+    "id": "fn-error",
+    "type": "function",
+    "z": "tab-monitored",
+    "name": "失敗メッセージ整形",
+    "func": "// 無言停止を防ぐ: KLAP エラー / 一時的無応答などを通知へ流す（docs/design.md §5.3）。\nmsg.payload = `ルンバ自動発進フロー失敗: ${msg.error && msg.error.message ? msg.error.message : '不明なエラー'}`;\nmsg.verdict = 'error';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 340,
+    "wires": [
+      ["notify"]
+    ]
+  }
+]

@@ -1,0 +1,81 @@
+name: Quality Auto-fix Proposal
+
+# ADR-0010 + ADR-0008 fool-proof: when a PR introduces lint/format violations,
+# this workflow runs the auto-fixers and posts the proposed diff as a PR
+# comment. It does NOT auto-commit — human review is preserved (auto-commit
+# would skip human judgement, violating fool-proof principle).
+#
+# The check (gating) lives in quality-gates.yml; this workflow is purely
+# advisory and runs only on PRs to keep noise out of main-branch CI.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ruff-autofix-proposal:
+    name: ruff fix + format (proposal)
+    runs-on: ubuntu-latest
+    if: hashFiles('**/*.py') != ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install ruff
+        run: pip install 'ruff>=0.15'
+      - name: Capture original tree hash
+        id: pre
+        run: echo "sha=$(git rev-parse HEAD:.)" >> "$GITHUB_OUTPUT"
+      - name: Run ruff fix + format (in-place, will discard after)
+        id: fix
+        run: |
+          ruff check --fix . || true
+          ruff format . || true
+          if git diff --quiet; then
+            echo "has_diff=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_diff=true" >> "$GITHUB_OUTPUT"
+            # Save the diff to a file (under 60KB to fit the PR comment limit).
+            git diff > /tmp/autofix.diff
+            head -c 60000 /tmp/autofix.diff > /tmp/autofix.diff.trim
+          fi
+      - name: Comment proposed fixes on PR
+        if: steps.fix.outputs.has_diff == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diff = fs.readFileSync('/tmp/autofix.diff.trim', 'utf8');
+            const body = [
+              '## 🛠️ ruff auto-fix proposal',
+              '',
+              'The lint / format checks would be satisfied by applying the diff below. **Auto-commit is intentionally disabled** (ADR-0008 fool-proof: human review is preserved). To accept, run locally:',
+              '',
+              '```bash',
+              'ruff check --fix .',
+              'ruff format .',
+              'git add -u && git commit --amend --no-edit',
+              'git push --force-with-lease',
+              '```',
+              '',
+              '<details><summary>Proposed diff</summary>',
+              '',
+              '```diff',
+              diff,
+              '```',
+              '',
+              '</details>'
+            ].join('\n');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
