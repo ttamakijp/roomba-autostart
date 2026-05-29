@@ -20,11 +20,13 @@ sudo systemctl start nodered.service
 
 ### 2. Tapo ノード導入
 
-Node-RED パレットで `node-red-contrib-tapo-new-api` をインストール。
+Node-RED パレットで `node-red-contrib-tapo-new-api` をインストール。提供ノード型は `tapo_actions`（`deviceIp` / `command` / `version`（KLAP, 既定 3）を設定。email/password は credentials）。
 
 ### 3. フロー import
 
-`flows/flow.basic.json` または `flows/flow.monitored.json` を Node-RED に import。
+`flows/flow.basic.json` または `flows/flow.monitored.json` を Node-RED に import。`<TAPO_IP>` プレースホルダを実 IP に置換し、`version` を実機ファーム（KLAP v2/v3）に合わせる。
+
+> import 後に Node-RED 上で編集したら、メニュー → Export で再 export し `flows/*.json` を上書きして正式形式を確定する（手書きテンプレと UI 生成形式の差分を吸収するため）。
 
 ### 4. 認証情報の設定
 

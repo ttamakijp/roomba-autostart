@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "Roomba 自動発進（基本）",
     "disabled": false,
-    "info": "毎日 09:00 にドックを約10秒 OFF→ON する最小フロー。\n認証情報（メール/パスワード/IP）はプレースホルダ。実値は Node-RED credentials で注入する。"
+    "info": "毎日 09:00 にドックを約10秒 OFF→ON する最小フロー。\nノード型は node-red-contrib-tapo-new-api の tapo_actions。\ndeviceIp はプレースホルダ <TAPO_IP>。email/password は flow JSON に含めず、import 後に各ノードの Node-RED credentials で設定する。\nversion は実機ファーム（KLAP v2/v3）に合わせて調整する。"
   },
   {
     "id": "inject-0900",
@@ -29,13 +29,15 @@
   },
   {
     "id": "tapo-off",
-    "type": "tapo-power",
+    "type": "tapo_actions",
     "z": "tab-basic",
     "name": "ドック OFF",
-    "host": "<TAPO_IP>",
-    "email": "<TPLINK_EMAIL>",
-    "password": "<TPLINK_PASSWORD>",
-    "action": "off",
+    "deviceIp": "<TAPO_IP>",
+    "deviceAlias": "",
+    "deviceIpRange": "",
+    "searchMode": "ip",
+    "command": "off",
+    "version": 3,
     "x": 350,
     "y": 120,
     "wires": [
@@ -64,13 +66,15 @@
   },
   {
     "id": "tapo-on",
-    "type": "tapo-power",
+    "type": "tapo_actions",
     "z": "tab-basic",
     "name": "ドック ON",
-    "host": "<TAPO_IP>",
-    "email": "<TPLINK_EMAIL>",
-    "password": "<TPLINK_PASSWORD>",
-    "action": "on",
+    "deviceIp": "<TAPO_IP>",
+    "deviceAlias": "",
+    "deviceIpRange": "",
+    "searchMode": "ip",
+    "command": "on",
+    "version": 3,
     "x": 730,
     "y": 120,
     "wires": [
