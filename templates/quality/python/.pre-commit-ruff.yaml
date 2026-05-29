@@ -1,0 +1,23 @@
+# Optional pre-commit hook extension for ruff (ADR-0010 preset).
+#
+# Use this if your project adopts the `pre-commit` framework. Otherwise the
+# `.githooks/pre-commit` from leak-only profile already handles content scan;
+# you can simply call ruff from there too.
+#
+# Activation:
+#   1. pip install pre-commit
+#   2. cp templates/quality/python/.pre-commit-ruff.yaml .pre-commit-config.yaml
+#   3. pre-commit install
+#
+# If you already have a .pre-commit-config.yaml, merge the `repos:` entries
+# below into your existing file rather than overwriting.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pin to a specific tag in production. The version below is the one tested
+    # with dev-templates' ADR-0010 baseline.
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format

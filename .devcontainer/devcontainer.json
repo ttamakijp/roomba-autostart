@@ -1,0 +1,23 @@
+{
+  "name": "${PROJECT_NAME}",
+  "image": "mcr.microsoft.com/devcontainers/python:3.10",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/common-utils:2": {}
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "GitHub.vscode-pull-request-github"
+      ],
+      "settings": {
+        "python.testing.pytestEnabled": true,
+        "ruff.lint.run": "onSave"
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}
